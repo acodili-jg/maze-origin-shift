@@ -3,8 +3,19 @@ use rand::Rng;
 use std::io::{self, stdout, Write};
 
 fn main() -> io::Result<()> {
-    let maze = MazeGraph::<5>::default();
+    let mut maze = MazeGraph::<5>::default();
+
+    println!("Initial maze");
     writeln_maze(stdout(), &maze)?;
+
+    for idx in 1..=100 {
+        maze.move_origin(&mut rand::thread_rng());
+
+        println!();
+        println!("After iteration #{idx}");
+        writeln_maze(stdout(), &maze)?;
+    }
+
     Ok(())
 }
 
@@ -71,6 +82,82 @@ impl<const W: usize, const H: usize> MazeGraph<W, H> {
     pub fn get(self, x: usize, y: usize) -> Option<MazeNode> {
         self.data.get(y)?.get(x).copied()
     }
+
+    pub fn move_origin<R: Rng + ?Sized>(&mut self, rng: &mut R) {
+        fn gen_bounded_direction<const W: usize, const H: usize, R: Rng + ?Sized>(
+            x: usize,
+            y: usize,
+            rng: &mut R,
+        ) -> Direction {
+            #[allow(overlapping_range_endpoints, clippy::match_same_arms)]
+            match (x, y, rng.gen_range(0u8..12u8)) {
+                (x, y, _) if x >= W || y >= H => unreachable!("origin should be in-bounds"),
+                (_, _, 12..) => {
+                    unreachable!("rng direction seed should be within [0, lcm(2, 3, 4))")
+                }
+
+                // Top-left corner
+                (0, 0, 0..=5) => Direction::Right,
+                (0, 0, 6..=11) => Direction::Down,
+
+                // Top-right corner
+                (x, 0, 0..=5) if x == W - 1 => Direction::Left,
+                (x, 0, 6..=11) if x == W - 1 => Direction::Down,
+
+                // Bottom-right corner
+                (x, y, 0..=5) if x == W - 1 && y == H - 1 => Direction::Left,
+                (x, y, 6..=11) if x == W - 1 && y == H - 1 => Direction::Up,
+
+                // Botton-left corner
+                (0, y, 0..=5) if y == H - 1 => Direction::Up,
+                (0, y, 6..=11) if y == H - 1 => Direction::Right,
+
+                // Left edge
+                (0, _, 0..=3) => Direction::Up,
+                (0, _, 4..=7) => Direction::Right,
+                (0, _, 8..=11) => Direction::Down,
+
+                // Top edge
+                (_, 0, 0..=3) => Direction::Left,
+                (_, 0, 4..=7) => Direction::Right,
+                (_, 0, 8..=11) => Direction::Down,
+
+                // Right edge
+                (x, _, 0..=3) if x == W - 1 => Direction::Left,
+                (x, _, 4..=7) if x == W - 1 => Direction::Up,
+                (x, _, 8..=11) if x == W - 1 => Direction::Down,
+
+                // Bottom edge
+                (_, y, 0..=3) if y == H - 1 => Direction::Left,
+                (_, y, 4..=7) if y == H - 1 => Direction::Up,
+                (_, y, 8..=11) if y == H - 1 => Direction::Right,
+
+                // Inside
+                (_, _, 0..=2) => Direction::Left,
+                (_, _, 3..=5) => Direction::Up,
+                (_, _, 6..=8) => Direction::Right,
+                (_, _, 9..=11) => Direction::Down,
+            }
+        }
+
+        #[inline]
+        const fn offset_towards(direction: Direction, x: usize, y: usize) -> (usize, usize) {
+            match direction {
+                Direction::Left => (x - 1, y),
+                Direction::Up => (x, y - 1),
+                Direction::Right => (x + 1, y),
+                Direction::Down => (x, y + 1),
+            }
+        }
+
+        let (x, y) = self.origin;
+        let direction = gen_bounded_direction::<W, H, R>(x, y, rng);
+        self.data[y][x].direction_mut().replace(direction);
+
+        self.origin = offset_towards(direction, x, y);
+        let (x, y) = self.origin;
+        self.data[y][x].direction_mut().take();
+    }
 }
 
 impl MazeNode {
@@ -92,6 +179,11 @@ impl MazeNode {
     #[inline]
     pub const fn direction(self) -> Option<Direction> {
         self.direction
+    }
+
+    #[inline]
+    pub fn direction_mut(&mut self) -> &mut Option<Direction> {
+        &mut self.direction
     }
 }
 
