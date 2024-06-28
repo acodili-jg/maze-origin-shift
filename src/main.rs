@@ -1,14 +1,16 @@
+use itertools::Itertools;
 use rand::distributions::{Distribution, Standard};
 use rand::Rng;
 use std::io::{self, stdout, Write};
 
 fn main() -> io::Result<()> {
-    let mut maze = MazeGraph::<5>::default();
+    const SIZE: usize = 5;
+    let mut maze = MazeGraph::<SIZE>::default();
 
     println!("Initial maze");
     writeln_maze(stdout(), &maze)?;
 
-    for idx in 1..=100 {
+    for idx in 1..=(SIZE * SIZE * 10) {
         maze.move_origin(&mut rand::thread_rng());
 
         println!();
@@ -23,14 +25,100 @@ fn writeln_maze<const W: usize, const H: usize, O: Write>(
     mut out: O,
     it: &MazeGraph<W, H>,
 ) -> io::Result<()> {
+    if W <= 1 || H <= 1 {
+        return Ok(());
+    }
+
+    let mut arrows = [[' '; W]; H];
     for y in 0..H {
         for x in 0..W {
-            #[allow(clippy::expect_used)]
-            let ch = format_maze_node(it.get(x, y).expect("node in bounds"));
-            write!(out, " {ch} ")?;
+            arrows[y][x] = format_maze_node(it.get(x, y).expect("node in bounds"));
         }
-        writeln!(out)?;
     }
+
+    let mut horizontal_edges = vec![[true; W]; H + 1];
+    for (y, edges) in horizontal_edges.iter_mut().enumerate().take(H).skip(1) {
+        for x in 0..W {
+            if matches!(
+                it.get(x, y - 1).expect("node in bounds").direction(),
+                Some(Direction::Down)
+            ) || matches!(
+                it.get(x, y).expect("node in bounds").direction(),
+                Some(Direction::Up)
+            ) {
+                edges[x] = false;
+            }
+        }
+    }
+
+    let mut vertical_edges = vec![vec![true; W + 1]; H];
+    for (y, edges) in vertical_edges.iter_mut().enumerate().take(H) {
+        for (x1, x2) in (0..W).tuple_windows() {
+            if matches!(
+                it.get(x1, y).expect("node in bounds").direction(),
+                Some(Direction::Right)
+            ) || matches!(
+                it.get(x2, y).expect("node in bounds").direction(),
+                Some(Direction::Left)
+            ) {
+                edges[x2] = false;
+            }
+        }
+    }
+
+    let mut vertices = vec![vec![0u8; W + 1]; H + 1];
+    for (y, edges) in horizontal_edges.iter().enumerate() {
+        for (x, edge) in edges.iter().enumerate() {
+            vertices[y][x] |= u8::from(*edge) << 2;
+            vertices[y][x + 1] |= u8::from(*edge);
+        }
+    }
+    for (y, edges) in vertical_edges.iter().enumerate() {
+        for (x, edge) in edges.iter().enumerate() {
+            vertices[y][x] |= u8::from(*edge) << 3;
+            vertices[y + 1][x] |= u8::from(*edge) << 1;
+        }
+    }
+    let vertices = vertices
+        .into_iter()
+        .zip(horizontal_edges)
+        .map(|(row1, row2)| {
+            row1.into_iter()
+                .map(|bits| match bits {
+                    0b0000 => " ",
+                    0b0001 => "╴",
+                    0b0010 => "╵",
+                    0b0011 => "┘",
+                    0b0100 => "╶",
+                    0b0101 => "─",
+                    0b0110 => "└",
+                    0b0111 => "┴",
+                    0b1000 => "╷",
+                    0b1001 => "┐",
+                    0b1010 => "│",
+                    0b1011 => "┤",
+                    0b1100 => "┌",
+                    0b1101 => "┬",
+                    0b1110 => "├",
+                    0b1111 => "┼",
+                    _ => unreachable!(),
+                })
+                .interleave(
+                    row2.into_iter()
+                        .map(|edge| if edge { "───" } else { "   " }),
+                )
+                .collect::<String>()
+        })
+        .interleave(vertical_edges.into_iter().zip(arrows).map(|(row1, row2)| {
+            row1.into_iter()
+                .map(|edge| if edge { '│' } else { ' ' })
+                .interleave(row2)
+                .join(" ")
+        }));
+    for row in vertices {
+        writeln!(out, "{row}")?;
+    }
+
     Ok(())
 }
 
