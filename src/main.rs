@@ -1,125 +1,149 @@
 use itertools::Itertools;
 use rand::distributions::{Distribution, Standard};
 use rand::Rng;
-use std::io::{self, stdout, Write};
 
-fn main() -> io::Result<()> {
-    const SIZE: usize = 5;
-    let mut maze = MazeGraph::<SIZE>::default();
+fn main() {
+    const WIDTH: usize = 5;
+    const HEIGHT: usize = WIDTH;
+    let mut maze = MazeGraph::<WIDTH, HEIGHT>::default();
 
-    println!("Initial maze");
-    writeln_maze(stdout(), &maze)?;
+    println!("Initial maze\n{}", format_maze(&maze));
 
-    for idx in 1..=(SIZE * SIZE * 10) {
+    for idx in 1..(WIDTH * HEIGHT * 10) {
         maze.move_origin(&mut rand::thread_rng());
 
-        println!();
-        println!("After iteration #{idx}");
-        writeln_maze(stdout(), &maze)?;
+        println!("After iteration #{idx}\n{}", format_maze(&maze));
     }
-
-    Ok(())
 }
 
-fn writeln_maze<const W: usize, const H: usize, O: Write>(
-    mut out: O,
-    it: &MazeGraph<W, H>,
-) -> io::Result<()> {
-    if W <= 1 || H <= 1 {
-        return Ok(());
-    }
-
-    let mut arrows = [[' '; W]; H];
-    for y in 0..H {
-        for x in 0..W {
-            arrows[y][x] = format_maze_node(it.get(x, y).expect("node in bounds"));
-        }
-    }
-
-    let mut horizontal_edges = vec![[true; W]; H + 1];
-    for (y, edges) in horizontal_edges.iter_mut().enumerate().take(H).skip(1) {
-        for x in 0..W {
-            if matches!(
-                it.get(x, y - 1).expect("node in bounds").direction(),
-                Some(Direction::Down)
-            ) || matches!(
-                it.get(x, y).expect("node in bounds").direction(),
-                Some(Direction::Up)
-            ) {
-                edges[x] = false;
+fn format_maze<const W: usize, const H: usize>(it: &MazeGraph<W, H>) -> String {
+    #[allow(clippy::expect_used)]
+    fn format_maze_nodes<const W: usize, const H: usize>(it: &MazeGraph<W, H>) -> [[char; W]; H] {
+        let mut nodes = [[' '; W]; H];
+        for (y, row) in nodes.iter_mut().enumerate() {
+            for (x, node) in row.iter_mut().enumerate() {
+                *node = format_maze_node(it.get(x, y).expect("node in bounds"));
             }
         }
+        nodes
     }
 
-    let mut vertical_edges = vec![vec![true; W + 1]; H];
-    for (y, edges) in vertical_edges.iter_mut().enumerate().take(H) {
-        for (x1, x2) in (0..W).tuple_windows() {
-            if matches!(
-                it.get(x1, y).expect("node in bounds").direction(),
-                Some(Direction::Right)
-            ) || matches!(
-                it.get(x2, y).expect("node in bounds").direction(),
-                Some(Direction::Left)
-            ) {
-                edges[x2] = false;
+    #[allow(clippy::expect_used)]
+    fn collect_horizontal_edges<const W: usize, const H: usize>(
+        it: &MazeGraph<W, H>,
+    ) -> Vec<[bool; W]> {
+        let mut horizontal_edges = vec![[true; W]; H + 1];
+        for (y, edges) in horizontal_edges.iter_mut().enumerate().take(H).skip(1) {
+            for (x, edge) in edges.iter_mut().enumerate() {
+                if matches!(
+                    it.get(x, y - 1).expect("node in bounds").direction(),
+                    Some(Direction::Down)
+                ) || matches!(
+                    it.get(x, y).expect("node in bounds").direction(),
+                    Some(Direction::Up)
+                ) {
+                    *edge = false;
+                }
             }
         }
+        horizontal_edges
     }
 
-    let mut vertices = vec![vec![0u8; W + 1]; H + 1];
-    for (y, edges) in horizontal_edges.iter().enumerate() {
-        for (x, edge) in edges.iter().enumerate() {
-            vertices[y][x] |= u8::from(*edge) << 2;
-            vertices[y][x + 1] |= u8::from(*edge);
+    #[allow(clippy::expect_used)]
+    fn collect_vertical_edges<const W: usize, const H: usize>(
+        it: &MazeGraph<W, H>,
+    ) -> Vec<Vec<bool>> {
+        let mut vertical_edges = vec![vec![true; W + 1]; H];
+        for (y, edges) in vertical_edges.iter_mut().enumerate().take(H) {
+            for (x1, x2) in (0..W).tuple_windows() {
+                if matches!(
+                    it.get(x1, y).expect("node in bounds").direction(),
+                    Some(Direction::Right)
+                ) || matches!(
+                    it.get(x2, y).expect("node in bounds").direction(),
+                    Some(Direction::Left)
+                ) {
+                    edges[x2] = false;
+                }
+            }
         }
+        vertical_edges
     }
-    for (y, edges) in vertical_edges.iter().enumerate() {
-        for (x, edge) in edges.iter().enumerate() {
-            vertices[y][x] |= u8::from(*edge) << 3;
-            vertices[y + 1][x] |= u8::from(*edge) << 1;
+
+    fn collect_vertices<const W: usize, const H: usize>(
+        horizontal_edges: &[[bool; W]],
+        vertical_edges: &[Vec<bool>],
+    ) -> Vec<Vec<(bool, bool, bool, bool)>> {
+        let mut vertices = vec![vec![(false, false, false, false); W + 1]; H + 1];
+        for (edges, row) in horizontal_edges.iter().zip(&mut vertices) {
+            for (x, edge) in edges.iter().enumerate() {
+                row[x].2 |= *edge;
+                row[x + 1].0 |= *edge;
+            }
         }
+        for (y, edges) in vertical_edges.iter().enumerate() {
+            for (x, edge) in edges.iter().enumerate() {
+                vertices[y][x].3 |= *edge;
+                vertices[y + 1][x].1 |= *edge;
+            }
+        }
+        vertices
     }
-    let vertices = vertices
-        .into_iter()
-        .zip(horizontal_edges)
+
+    match (W, H) {
+        (0, 0) => return String::from("┌┐\n└┘"),
+        (w, 0) => {
+            let wall = std::iter::repeat("───").take(w).join("─");
+            return format!("┌{wall}┐\n└{wall}┘");
+        }
+        (0, h) => return format!("┌┐\n{}└┘", "││\n".repeat(h)),
+        _ => {}
+    }
+
+    let nodes = format_maze_nodes(it);
+    let horizontal_edges = collect_horizontal_edges(it);
+    let vertical_edges = collect_vertical_edges(it);
+    let vertices = collect_vertices::<W, H>(&horizontal_edges, &vertical_edges);
+
+    std::iter::zip(vertices, horizontal_edges)
         .map(|(row1, row2)| {
             row1.into_iter()
-                .map(|bits| match bits {
-                    0b0000 => " ",
-                    0b0001 => "╴",
-                    0b0010 => "╵",
-                    0b0011 => "┘",
-                    0b0100 => "╶",
-                    0b0101 => "─",
-                    0b0110 => "└",
-                    0b0111 => "┴",
-                    0b1000 => "╷",
-                    0b1001 => "┐",
-                    0b1010 => "│",
-                    0b1011 => "┤",
-                    0b1100 => "┌",
-                    0b1101 => "┬",
-                    0b1110 => "├",
-                    0b1111 => "┼",
-                    _ => unreachable!(),
-                })
+                .map(format_vertex)
                 .interleave(
                     row2.into_iter()
                         .map(|edge| if edge { "───" } else { "   " }),
                 )
                 .collect::<String>()
         })
-        .interleave(vertical_edges.into_iter().zip(arrows).map(|(row1, row2)| {
+        .interleave(std::iter::zip(vertical_edges, nodes).map(|(row1, row2)| {
             row1.into_iter()
                 .map(|edge| if edge { '│' } else { ' ' })
                 .interleave(row2)
                 .join(" ")
-        }));
-    for row in vertices {
-        writeln!(out, "{row}")?;
-    }
+        }))
+        .join("\n")
+}
 
-    Ok(())
+#[inline]
+const fn format_vertex((left, up, right, down): (bool, bool, bool, bool)) -> &'static str {
+    match (left, up, right, down) {
+        (false, false, false, false) => " ",
+        (false, false, false, true) => "╷",
+        (false, false, true, false) => "╶",
+        (false, false, true, true) => "┌",
+        (false, true, false, false) => "╵",
+        (false, true, false, true) => "│",
+        (false, true, true, false) => "└",
+        (false, true, true, true) => "├",
+        (true, false, false, false) => "╴",
+        (true, false, false, true) => "┐",
+        (true, false, true, false) => "─",
+        (true, false, true, true) => "┬",
+        (true, true, false, false) => "┘",
+        (true, true, false, true) => "┤",
+        (true, true, true, false) => "┴",
+        (true, true, true, true) => "┼",
+    }
 }
 
 #[inline]
@@ -171,7 +195,8 @@ impl<const W: usize, const H: usize> MazeGraph<W, H> {
         self.data.get(y)?.get(x).copied()
     }
 
-    pub fn move_origin<R: Rng + ?Sized>(&mut self, rng: &mut R) {
+    #[inline]
+    pub fn move_origin<R: Rng + ?Sized>(&mut self, rng: &mut R) -> bool {
         fn gen_bounded_direction<const W: usize, const H: usize, R: Rng + ?Sized>(
             x: usize,
             y: usize,
@@ -228,7 +253,6 @@ impl<const W: usize, const H: usize> MazeGraph<W, H> {
             }
         }
 
-        #[inline]
         const fn offset_towards(direction: Direction, x: usize, y: usize) -> (usize, usize) {
             match direction {
                 Direction::Left => (x - 1, y),
@@ -238,6 +262,10 @@ impl<const W: usize, const H: usize> MazeGraph<W, H> {
             }
         }
 
+        if W <= 1 || H <= 1 {
+            return false;
+        }
+
         let (x, y) = self.origin;
         let direction = gen_bounded_direction::<W, H, R>(x, y, rng);
         self.data[y][x].direction_mut().replace(direction);
@@ -245,6 +273,8 @@ impl<const W: usize, const H: usize> MazeGraph<W, H> {
         self.origin = offset_towards(direction, x, y);
         let (x, y) = self.origin;
         self.data[y][x].direction_mut().take();
+
+        true
     }
 }
 
@@ -283,12 +313,16 @@ impl<const W: usize, const H: usize> Default for MazeGraph<W, H> {
             #[inline]
             const fn default_row<const W: usize>() -> [MazeNode; W] {
                 let mut row = [MazeNode::new_towards(Direction::Left); W];
-                row[0] = MazeNode::new_towards(Direction::Up);
+                if W != 0 {
+                    row[0] = MazeNode::new_towards(Direction::Up);
+                }
                 row
             }
 
             let mut data = [default_row(); H];
-            data[0][0] = MazeNode::new_origin();
+            if W != 0 && H != 0 {
+                data[0][0] = MazeNode::new_origin();
+            }
             data
         }
 
